@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WebUSB ADB / Fastboot demo</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    max-width: 780px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.5rem; border-bottom: 1px solid #8884; padding-bottom: .3rem; }
+  .row { display: flex; gap: .5rem; margin: .6rem 0; flex-wrap: wrap; }
+  button {
+    padding: .5rem .9rem; border-radius: 8px; border: 1px solid #8886;
+    background: #7c6ef522; cursor: pointer; font-size: .95rem;
+  }
+  button:hover { background: #7c6ef544; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=text] {
+    flex: 1; min-width: 200px; padding: .5rem .7rem; border-radius: 8px;
+    border: 1px solid #8886; font-family: ui-monospace, monospace; font-size: .9rem;
+  }
+  pre {
+    background: #80808014; border: 1px solid #8884; border-radius: 8px;
+    padding: .8rem; white-space: pre-wrap; word-break: break-word;
+    min-height: 2.5em; font-size: .85rem;
+  }
+  .status { font-size: .85rem; opacity: .75; }
+  .warn {
+    background: #f5a62322; border: 1px solid #f5a62366; border-radius: 8px;
+    padding: .7rem .9rem; font-size: .88rem; margin: 1rem 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>WebUSB ADB / Fastboot demo</h1>
+<p class="status">
+  Requires Chrome or Edge, served over <code>http://localhost</code> or <code>https://</code>
+  (WebUSB needs a secure context and won't work from a <code>file://</code> URL).
+</p>
+<div class="warn">
+  On Windows, the stock ADB/Fastboot drivers usually claim the USB interface before
+  WebUSB can — you may need a WinUSB-compatible driver (e.g. via Zadig) for the device's
+  ADB/Fastboot interface. Linux and macOS generally work without extra setup.
+</div>
+
+<h2>ADB</h2>
+<div class="row">
+  <button id="adb-connect">Connect device (ADB)</button>
+  <button id="adb-disconnect" disabled>Disconnect</button>
+</div>
+<p class="status" id="adb-status">Not connected.</p>
+<div class="row">
+  <input id="adb-cmd" type="text" placeholder="shell command, e.g. getprop ro.product.model" disabled />
+  <button id="adb-run" disabled>Run</button>
+</div>
+<pre id="adb-output"></pre>
+
+<h2>Fastboot</h2>
+<div class="row">
+  <button id="fb-connect">Connect device (Fastboot)</button>
+  <button id="fb-disconnect" disabled>Disconnect</button>
+</div>
+<p class="status" id="fb-status">Not connected.</p>
+<div class="row">
+  <input id="fb-var" type="text" placeholder="variable, e.g. product" disabled />
+  <button id="fb-getvar" disabled>getvar</button>
+</div>
+<pre id="fb-output"></pre>
+
+<script type="module">
+  import { AdbDevice } from './adb.js';
+  import { FastbootDevice } from './fastboot.js';
+
+  if (!('usb' in navigator)) {
+    document.body.insertAdjacentHTML(
+      'afterbegin',
+      '<div class="warn">This browser does not support WebUSB. Try Chrome or Edge on desktop.</div>'
+    );
+  }
+
+  // ---------------- ADB ----------------
+  let adb = null;
+  const adbStatus = document.getElementById('adb-status');
+  const adbOutput = document.getElementById('adb-output');
+  const adbCmd = document.getElementById('adb-cmd');
+  const adbConnectBtn = document.getElementById('adb-connect');
+  const adbDisconnectBtn = document.getElementById('adb-disconnect');
+  const adbRunBtn = document.getElementById('adb-run');
+
+  adbConnectBtn.addEventListener('click', async () => {
+    try {
+      adbStatus.textContent = 'Requesting device…';
+      adb = await AdbDevice.requestDevice();
+      adbStatus.textContent = `Connected: ${adb.deviceBanner || '(no banner)'}`;
+      adbCmd.disabled = false;
+      adbRunBtn.disabled = false;
+      adbDisconnectBtn.disabled = false;
+      adbConnectBtn.disabled = true;
+    } catch (e) {
+      adbStatus.textContent = `Error: ${e.message}`;
+    }
+  });
+
+  adbDisconnectBtn.addEventListener('click', async () => {
+    if (adb) await adb.close();
+    adb = null;
+    adbStatus.textContent = 'Not connected.';
+    adbCmd.disabled = true;
+    adbRunBtn.disabled = true;
+    adbDisconnectBtn.disabled = true;
+    adbConnectBtn.disabled = false;
+  });
+
+  async function runAdbCommand() {
+    if (!adb || !adbCmd.value) return;
+    adbRunBtn.disabled = true;
+    try {
+      adbOutput.textContent = await adb.shell(adbCmd.value);
+    } catch (e) {
+      adbOutput.textContent = `Error: ${e.message}`;
+    } finally {
+      adbRunBtn.disabled = false;
+    }
+  }
+  adbRunBtn.addEventListener('click', runAdbCommand);
+  adbCmd.addEventListener('keydown', (e) => { if (e.key === 'Enter') runAdbCommand(); });
+
+  // ---------------- Fastboot ----------------
+  let fb = null;
+  const fbStatus = document.getElementById('fb-status');
+  const fbOutput = document.getElementById('fb-output');
+  const fbVar = document.getElementById('fb-var');
+  const fbConnectBtn = document.getElementById('fb-connect');
+  const fbDisconnectBtn = document.getElementById('fb-disconnect');
+  const fbGetvarBtn = document.getElementById('fb-getvar');
+
+  fbConnectBtn.addEventListener('click', async () => {
+    try {
+      fbStatus.textContent = 'Requesting device…';
+      fb = await FastbootDevice.requestDevice();
+      fbStatus.textContent = 'Connected.';
+      fbVar.disabled = false;
+      fbGetvarBtn.disabled = false;
+      fbDisconnectBtn.disabled = false;
+      fbConnectBtn.disabled = true;
+    } catch (e) {
+      fbStatus.textContent = `Error: ${e.message}`;
+    }
+  });
+
+  fbDisconnectBtn.addEventListener('click', async () => {
+    if (fb) await fb.close();
+    fb = null;
+    fbStatus.textContent = 'Not connected.';
+    fbVar.disabled = true;
+    fbGetvarBtn.disabled = true;
+    fbDisconnectBtn.disabled = true;
+    fbConnectBtn.disabled = false;
+  });
+
+  async function runGetvar() {
+    if (!fb || !fbVar.value) return;
+    fbGetvarBtn.disabled = true;
+    try {
+      fbOutput.textContent = await fb.getVar(fbVar.value);
+    } catch (e) {
+      fbOutput.textContent = `Error: ${e.message}`;
+    } finally {
+      fbGetvarBtn.disabled = false;
+    }
+  }
+  fbGetvarBtn.addEventListener('click', runGetvar);
+  fbVar.addEventListener('keydown', (e) => { if (e.key === 'Enter') runGetvar(); });
+</script>
+</body>
+</html>
